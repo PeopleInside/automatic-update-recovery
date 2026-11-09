@@ -1,0 +1,48 @@
+name: Build Plugin ZIP
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout codice
+        uses: actions/checkout@v4
+
+      - name: Crea ZIP del plugin
+        run: |
+          # Nome base del plugin
+          PLUGIN_NAME="automatic-update-recovery"
+          # Recupera la versione dal tag della release (es. 1.4.0)
+          VERSION="${{ github.event.release.tag_name }}"
+          # Nome del file ZIP con la versione
+          ZIP_NAME="${PLUGIN_NAME}-${VERSION}.zip"
+          
+          mkdir -p "$PLUGIN_NAME"
+          
+          # Copia tutti i file del plugin nella cartella
+          # Escludiamo .git, .github, la cartella stessa e file non necessari
+          rsync -av --exclude='.git' \
+                   --exclude='.github' \
+                   --exclude='.gitignore' \
+                   --exclude="$PLUGIN_NAME" \
+                   --exclude='*.zip' \
+                   ./ "$PLUGIN_NAME/"
+          
+          # Crea lo ZIP con il nome che include la versione
+          zip -r "$ZIP_NAME" "$PLUGIN_NAME"
+          
+          # Salva il nome del file ZIP nelle variabili di ambiente per i passaggi successivi
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Carica ZIP nella Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
