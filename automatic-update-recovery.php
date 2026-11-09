@@ -1,12 +1,14 @@
 <?php
 /**
  * Plugin Name: Automatic Update Recovery
+ * Plugin URI:  https://github.com/PeopleInside/automatic-update-recovery
  * Description: Attempts controlled recovery updates when eligible plugin updates remain pending, featuring GitHub self-update, email alerts, and cron diagnostics.
  * Version:     1.4.0
  * Requires at least: 6.5
  * Tested up to:      7.1.4
  * Requires PHP:      7.4
  * Author:            PeopleInside
+ * Author URI:        https://github.com/PeopleInside
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       automatic-update-recovery
