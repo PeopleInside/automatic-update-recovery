@@ -1,13 +1,13 @@
 === Automatic Update Recovery ===
 Contributors: peopleinside
 Requires at least: 6.5
-Tested up to: 6.8
+Tested up to: 7.1.4
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Attempts one controlled recovery update when an eligible plugin update stays pending across two distinct update checks.
+Attempts controlled recovery updates when eligible plugin updates remain pending, featuring GitHub self-update, email alerts, and cron diagnostics.
 
 == Description ==
 
