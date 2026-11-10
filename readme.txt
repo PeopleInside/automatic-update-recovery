@@ -3,7 +3,7 @@ Contributors: peopleinside
 Requires at least: 6.5
 Tested up to: 7.1.4
 Requires PHP: 7.4
-Stable tag: 1.4.0
+Stable tag: 1.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -68,6 +68,9 @@ This software is provided "AS IS", without any warranty. While it has been teste
 You use this software entirely at your own risk. The authors and contributors are not liable for any damages, data loss, or unexpected behavior resulting from its use, modification, or distribution. Always review and test the code independently before deploying it in critical or production environments.
 
 == Changelog ==
+
+= 1.4.1 =
+* better self-update code
 
 = 1.4.0 =
 * Add: the number of recovery attempts per plugin and target version is now configurable in the settings (default 3). Previously a single attempt was made and a failure was never retried.
