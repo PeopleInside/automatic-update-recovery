@@ -70,7 +70,9 @@ You use this software entirely at your own risk. The authors and contributors ar
 == Changelog ==
 
 = 1.4.1 =
-* better self-update code
+* **Fix**: Implemented scoped filesystem initialization to prevent "Could not access filesystem" (`fs_unavailable`) errors during background (WP-Cron/CLI) updates. This also allows the recovery system to successfully update third-party plugins that may have custom updater issues.
+* **New**: Added a "Send failure email ONLY after all attempts are exhausted" option (enabled by default). This reduces notification spam while still allowing users to opt-in to per-attempt alerts if desired.
+* **Improvement**: Enhanced tracking logic to detect when a monitored plugin is updated natively or manually. The system now logs this success and automatically removes the plugin from the recovery queue.
 
 = 1.4.0 =
 * Add: the number of recovery attempts per plugin and target version is now configurable in the settings (default 3). Previously a single attempt was made and a failure was never retried.
