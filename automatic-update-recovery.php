@@ -3,7 +3,7 @@
  * Plugin Name: Automatic Update Recovery
  * Plugin URI:  https://github.com/PeopleInside/automatic-update-recovery
  * Description: Attempts controlled recovery updates when eligible plugin updates remain pending, featuring GitHub self-update, email alerts, and cron diagnostics.
- * Version:     1.4.0
+ * Version:     1.4.1
  * Requires at least: 6.5
  * Tested up to:      7.1.4
  * Requires PHP:      7.4
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class Automatic_Update_Recovery {
-	const VERSION            = '1.4.0';
+	const VERSION            = '1.4.1';
 	const CRON_HOOK          = 'aur_recovery_check';
 	const STATE_OPTION       = 'aur_recovery_state';
 	const LOG_OPTION         = 'aur_recovery_log';
