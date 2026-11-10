@@ -3,7 +3,7 @@ Contributors: peopleinside
 Requires at least: 6.5
 Tested up to: 7.1.4
 Requires PHP: 7.4
-Stable tag: 1.4.0
+Stable tag: 1.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -68,6 +68,11 @@ This software is provided "AS IS", without any warranty. While it has been teste
 You use this software entirely at your own risk. The authors and contributors are not liable for any damages, data loss, or unexpected behavior resulting from its use, modification, or distribution. Always review and test the code independently before deploying it in critical or production environments.
 
 == Changelog ==
+
+= 1.4.1 =
+* **Fix**: Implemented scoped filesystem initialization to prevent "Could not access filesystem" (`fs_unavailable`) errors during background (WP-Cron/CLI) updates. This also allows the recovery system to successfully update third-party plugins that may have custom updater issues.
+* **New**: Added a "Send failure email ONLY after all attempts are exhausted" option (enabled by default). This reduces notification spam while still allowing users to opt-in to per-attempt alerts if desired.
+* **Improvement**: Enhanced tracking logic to detect when a monitored plugin is updated natively or manually. The system now logs this success and automatically removes the plugin from the recovery queue.
 
 = 1.4.0 =
 * Add: the number of recovery attempts per plugin and target version is now configurable in the settings (default 3). Previously a single attempt was made and a failure was never retried.
