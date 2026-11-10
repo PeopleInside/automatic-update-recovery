@@ -28,6 +28,7 @@ final class Automatic_Update_Recovery {
 	const MAX_ATTEMPTS_OPT   = 'aur_max_attempts';
 	const EMAIL_FAIL_OPT     = 'aur_email_on_fail';
 	const EMAIL_SUCCESS_OPT  = 'aur_email_on_success';
+	const EMAIL_FINAL_FAIL_OPT = 'aur_email_final_fail_only'; // Nuova opzione
 	const LAST_RUN_OPTION    = 'aur_last_run_time';
 	const LOCK_NAME          = 'aur_recovery';
 	const CAPABILITY         = 'update_plugins';
@@ -78,15 +79,18 @@ final class Automatic_Update_Recovery {
 		if ( false === get_option( self::ENABLED_OPTION, false ) ) {
 			add_option( self::ENABLED_OPTION, 1, '', false );
 		}
-		// Default settings
 		if ( false === get_option( self::MAX_ATTEMPTS_OPT, false ) ) {
 			add_option( self::MAX_ATTEMPTS_OPT, 3, '', false );
 		}
 		if ( false === get_option( self::EMAIL_FAIL_OPT, false ) ) {
-			add_option( self::EMAIL_FAIL_OPT, 1, '', false ); // Default ON
+			add_option( self::EMAIL_FAIL_OPT, 1, '', false );
 		}
 		if ( false === get_option( self::EMAIL_SUCCESS_OPT, false ) ) {
-			add_option( self::EMAIL_SUCCESS_OPT, 0, '', false ); // Default OFF
+			add_option( self::EMAIL_SUCCESS_OPT, 0, '', false );
+		}
+		// Nuova opzione: attiva di default (1)
+		if ( false === get_option( self::EMAIL_FINAL_FAIL_OPT, false ) ) {
+			add_option( self::EMAIL_FINAL_FAIL_OPT, 1, '', false );
 		}
 		self::ensure_schedule();
 	}
@@ -94,6 +98,30 @@ final class Automatic_Update_Recovery {
 	public static function deactivate() {
 		wp_clear_scheduled_hook( self::CRON_HOOK );
 		delete_option( self::LOCK_NAME . '.lock' );
+	}
+
+	/**
+	 * Inizializza WP_Filesystem in modo sicuro per gli aggiornamenti in background.
+	 * Risolve il falso positivo "Impossibile accedere al file system" (fs_unavailable)
+	 * su alcuni ambienti quando wp-cron gira senza tutte le variabili d'ambiente.
+	 * Il fix è scoped esclusivamente alla directory dei plugin per massima sicurezza,
+	 * permettendo a questo plugin di recuperare anche altri plugin con updater non corretti.
+	 */
+	private static function ensure_filesystem_initialized() {
+		add_filter( 'filesystem_method', function( $method, $args, $context ) {
+			if ( defined( 'WP_PLUGIN_DIR' ) && is_string( $context ) && strpos( $context, WP_PLUGIN_DIR ) === 0 ) {
+				return 'direct';
+			}
+			return $method;
+		}, 10, 3 );
+
+		if ( wp_doing_cron() || ( defined( 'WP_CLI' ) && WP_CLI ) ) {
+			global $wp_filesystem;
+			if ( ! ( $wp_filesystem instanceof \WP_Filesystem_Base ) ) {
+				require_once ABSPATH . 'wp-admin/includes/file.php';
+				WP_Filesystem();
+			}
+		}
 	}
 
 	public static function run_check() {
@@ -104,8 +132,10 @@ final class Automatic_Update_Recovery {
 			return;
 		}
 
-		// Registra l'ultima esecuzione
 		update_option( self::LAST_RUN_OPTION, time(), false );
+
+		// FIX: Inizializza il filesystem prima di caricare gli upgrader files
+		self::ensure_filesystem_initialized();
 
 		self::load_upgrader_files();
 
@@ -187,8 +217,31 @@ final class Automatic_Update_Recovery {
 			}
 		}
 
+		// Drop tracking for plugins whose offer disappeared or are no longer eligible.
+		// FIX: Logga se il plugin è stato aggiornato nativamente o manualmente.
 		foreach ( array_keys( $state ) as $tracked_plugin ) {
 			if ( ! isset( $eligible[ $tracked_plugin ] ) ) {
+				if ( isset( $plugins[ $tracked_plugin ] ) ) {
+					$current_version = (string) $plugins[ $tracked_plugin ]['Version'];
+					$target_version  = (string) $state[ $tracked_plugin ]['target'];
+					
+					if ( version_compare( $current_version, $target_version, '>=' ) ) {
+						self::add_log( 
+							'success', 
+							$tracked_plugin, 
+							sprintf( 
+								__( 'Plugin aggiornato con successo (nativamente o manualmente). Versione installata: %s. Rimosso dal monitoraggio.', 'automatic-update-recovery' ), 
+								$current_version 
+							) 
+						);
+					} else {
+						self::add_log( 
+							'info', 
+							$tracked_plugin, 
+							__( 'Offerta di aggiornamento scomparsa o plugin escluso. Rimosso dal monitoraggio.', 'automatic-update-recovery' ) 
+						);
+					}
+				}
 				unset( $state[ $tracked_plugin ] );
 			}
 		}
@@ -234,9 +287,10 @@ final class Automatic_Update_Recovery {
 		$plugins_after = get_plugins();
 		$after_version = isset( $plugins_after[ $plugin_file ]['Version'] ) ? (string) $plugins_after[ $plugin_file ]['Version'] : '';
 
-		$email_on_fail    = (bool) get_option( self::EMAIL_FAIL_OPT, 1 );
-		$email_on_success = (bool) get_option( self::EMAIL_SUCCESS_OPT, 0 );
-		$admin_email      = get_option( 'admin_email' );
+		$email_on_fail        = (bool) get_option( self::EMAIL_FAIL_OPT, 1 );
+		$email_on_success     = (bool) get_option( self::EMAIL_SUCCESS_OPT, 0 );
+		$email_final_fail_only = (bool) get_option( self::EMAIL_FINAL_FAIL_OPT, 1 ); // Nuova logica
+		$admin_email          = get_option( 'admin_email' );
 
 		if ( '' !== $after_version && version_compare( $after_version, $record['target'], '>=' ) ) {
 			$msg = sprintf( __( 'Recovery successful. Installed version: %s.', 'automatic-update-recovery' ), $after_version );
@@ -253,7 +307,10 @@ final class Automatic_Update_Recovery {
 			$state[ $plugin_file ]  = $record;
 			self::add_log( 'failed', $plugin_file, $message );
 
-			if ( $email_on_fail ) {
+			// Invia email di fallimento SOLO se:
+			// 1. L'opzione di invio email per fallimento è attiva E
+			// 2. (L'opzione "solo dopo esaurimento tentativi" è DISATTIVA) OPPURE (i tentativi hanno raggiunto il massimo)
+			if ( $email_on_fail && ( ! $email_final_fail_only || $record['attempts'] >= $max_attempts ) ) {
 				$mail_msg = sprintf( "Plugin: %s\nTarget: %s\nAttempt: %d/%d\nError: %s", $plugin_file, $record['target'], $record['attempts'], $max_attempts, $message );
 				wp_mail( $admin_email, '[AUR] Update Failed: ' . $plugin_file, $mail_msg );
 			}
@@ -386,17 +443,18 @@ final class Automatic_Update_Recovery {
 			return;
 		}
 
-		$enabled        = (bool) get_option( self::ENABLED_OPTION, 1 );
-		$max_attempts   = (int) get_option( self::MAX_ATTEMPTS_OPT, 3 );
-		$email_fail     = (bool) get_option( self::EMAIL_FAIL_OPT, 1 );
-		$email_success  = (bool) get_option( self::EMAIL_SUCCESS_OPT, 0 );
-		$exclusions     = self::get_exclusions();
-		$state          = self::get_state();
-		$log            = get_option( self::LOG_OPTION, array() );
-		$log            = is_array( $log ) ? array_reverse( $log ) : array();
-		$next           = wp_next_scheduled( self::CRON_HOOK );
-		$last_run       = get_option( self::LAST_RUN_OPTION, 0 );
-		$disabled_cron  = defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON;
+		$enabled          = (bool) get_option( self::ENABLED_OPTION, 1 );
+		$max_attempts     = (int) get_option( self::MAX_ATTEMPTS_OPT, 3 );
+		$email_fail       = (bool) get_option( self::EMAIL_FAIL_OPT, 1 );
+		$email_success    = (bool) get_option( self::EMAIL_SUCCESS_OPT, 0 );
+		$email_final_fail = (bool) get_option( self::EMAIL_FINAL_FAIL_OPT, 1 ); // Nuova opzione
+		$exclusions       = self::get_exclusions();
+		$state            = self::get_state();
+		$log              = get_option( self::LOG_OPTION, array() );
+		$log              = is_array( $log ) ? array_reverse( $log ) : array();
+		$next             = wp_next_scheduled( self::CRON_HOOK );
+		$last_run         = get_option( self::LAST_RUN_OPTION, 0 );
+		$disabled_cron    = defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON;
 
 		$installed = get_plugins();
 		self::load_upgrader_files();
@@ -404,9 +462,8 @@ final class Automatic_Update_Recovery {
 		$offers  = get_site_transient( 'update_plugins' );
 		$pending = self::pending_updates( $offers, $installed );
 
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		$just_saved    = isset( $_GET['updated'] );
-		$log_cleared   = isset( $_GET['log_cleared'] );
+		$just_saved  = isset( $_GET['updated'] );
+		$log_cleared = isset( $_GET['log_cleared'] );
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'Automatic Update Recovery', 'automatic-update-recovery' ); ?></h1>
@@ -448,7 +505,8 @@ final class Automatic_Update_Recovery {
 						<th scope="row"><?php esc_html_e( 'Email notifications', 'automatic-update-recovery' ); ?></th>
 						<td>
 							<label><input type="checkbox" name="email_fail" value="1" <?php checked( $email_fail ); ?>> <?php esc_html_e( 'Send email on update failure', 'automatic-update-recovery' ); ?></label><br>
-							<label><input type="checkbox" name="email_success" value="1" <?php checked( $email_success ); ?>> <?php esc_html_e( 'Send email on successful update', 'automatic-update-recovery' ); ?></label>
+							<label><input type="checkbox" name="email_success" value="1" <?php checked( $email_success ); ?>> <?php esc_html_e( 'Send email on successful update', 'automatic-update-recovery' ); ?></label><br>
+							<label><input type="checkbox" name="email_final_fail" value="1" <?php checked( $email_final_fail ); ?>> <?php esc_html_e( 'Send failure email ONLY after all attempts are exhausted', 'automatic-update-recovery' ); ?></label>
 							<p class="description"><?php printf( esc_html__( 'Emails will be sent to: %s', 'automatic-update-recovery' ), esc_html( get_option( 'admin_email' ) ) ); ?></p>
 						</td>
 					</tr>
@@ -524,7 +582,7 @@ final class Automatic_Update_Recovery {
 					<?php printf( esc_html__( 'Next scheduled check: %s', 'automatic-update-recovery' ), esc_html( wp_date( 'Y-m-d H:i:s', (int) $next ) ) ); ?>
 				<?php else : ?>
 					<?php esc_html_e( 'Next scheduled check: Not scheduled (will be scheduled on next initialization).', 'automatic-update-recovery' ); ?>
-		<?php endif; ?>
+				<?php endif; ?>
 			</p>
 		</div>
 		<?php
@@ -675,7 +733,8 @@ final class Automatic_Update_Recovery {
 		update_option( self::MAX_ATTEMPTS_OPT, isset( $_POST['max_attempts'] ) ? max( 1, (int) $_POST['max_attempts'] ) : 3, false );
 		update_option( self::EMAIL_FAIL_OPT, isset( $_POST['email_fail'] ) ? 1 : 0, false );
 		update_option( self::EMAIL_SUCCESS_OPT, isset( $_POST['email_success'] ) ? 1 : 0, false );
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		update_option( self::EMAIL_FINAL_FAIL_OPT, isset( $_POST['email_final_fail'] ) ? 1 : 0, false ); // Salvataggio nuova opzione
+		
 		$submitted = isset( $_POST['excluded'] ) && is_array( $_POST['excluded'] ) ? wp_unslash( $_POST['excluded'] ) : array();
 		update_option( self::EXCLUDE_OPTION, self::sanitize_exclusions( $submitted, array_keys( get_plugins() ), self::get_exclusions() ), false );
 		wp_safe_redirect( add_query_arg( array( 'page' => 'automatic-update-recovery', 'updated' => '1' ), admin_url( 'tools.php' ) ) );
@@ -695,7 +754,7 @@ class AUR_GitHub_Updater {
 	const GITHUB_API_URL   = 'https://api.github.com/repos/' . self::GITHUB_REPO . '/releases/latest';
 	const PLUGIN_SLUG      = 'automatic-update-recovery';
 	const CACHE_KEY        = 'aur_github_latest_release';
-	const CACHE_TTL        = 2 * HOUR_IN_SECONDS; // FIX: Reduced from 12h to 2h
+	const CACHE_TTL        = 2 * HOUR_IN_SECONDS;
 	const CACHE_FAIL_TTL   = 15 * MINUTE_IN_SECONDS;
 
 	public static function instance(): AUR_GitHub_Updater {
@@ -714,7 +773,7 @@ class AUR_GitHub_Updater {
 	}
 
 	private function plugin_basename(): string {
-		return plugin_basename( dirname( __DIR__ ) . '/automatic-update-recovery/automatic-update-recovery.php' ); // Fallback safe
+		return plugin_basename( dirname( __DIR__ ) . '/automatic-update-recovery/automatic-update-recovery.php' );
 	}
 
 	private function installed_version( $transient, string $basename ): string {
@@ -820,7 +879,6 @@ class AUR_GitHub_Updater {
 			return false;
 		}
 		$host = strtolower( $parts['host'] );
-		// FIX: Added 'github-releases.githubusercontent.com' to prevent download blocking
 		return in_array( $host, array( 'github.com', 'api.github.com', 'codeload.github.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com' ), true );
 	}
 
@@ -833,7 +891,6 @@ class AUR_GitHub_Updater {
 			return $transient;
 		}
 
-		// Use a reliable basename detection
 		$basename = 'automatic-update-recovery/automatic-update-recovery.php';
 		if ( ! isset( $transient->response ) || ! is_array( $transient->response ) ) {
 			$transient->response = array();
